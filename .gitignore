@@ -1,0 +1,14 @@
+# 런타임 데이터 (로컬에서만 생성됨)
+chat_rooms.json
+chat_messages.json
+chat_uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# OS
+.DS_Store
+Thumbs.db
