@@ -416,8 +416,6 @@ st.caption("내부망에서 프로젝트별 대화 로그를 남기기 위한 St
 # ═══════════════════════════════════════════
 @st.fragment(run_every="2s")
 def render_chat_log(selected_room, search_keyword, current_user):
-    if current_user:
-        mark_messages_read(selected_room, current_user)
 
     messages = load_messages()
     room_messages = [m for m in messages if m["방이름"] == selected_room]
@@ -488,12 +486,14 @@ def render_chat_log(selected_room, search_keyword, current_user):
                 if st.button(ok_label, key=f"ok_{msg_id}"):
                     if current_user:
                         toggle_reaction(msg_id, "OK", current_user)
+                        mark_messages_read(selected_room, current_user)
                         st.rerun()
 
             with col_tb:
                 if st.button(tb_label, key=f"tb_{msg_id}"):
                     if current_user:
                         toggle_reaction(msg_id, "따봉", current_user)
+                        mark_messages_read(selected_room, current_user)
                         st.rerun()
 
 
@@ -566,6 +566,8 @@ with left:
             label = f"✅ {rn}" if st.session_state.selected_room == rn else f"🚪 {rn}"
             if st.button(label, key=f"room_{rn}", use_container_width=True):
                 st.session_state.selected_room = rn
+                if st.session_state.user_name:
+                    mark_messages_read(rn, st.session_state.user_name)
                 st.rerun()
 
 
@@ -735,6 +737,7 @@ with right:
                         message=message.strip(),
                         uploaded_file=uploaded_image
                     )
+                    mark_messages_read(selected_room, st.session_state.user_name)
                     st.session_state.message_box_key += 1
                     st.session_state.image_box_key += 1
                     st.rerun()
