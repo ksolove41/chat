@@ -318,11 +318,24 @@ def scroll_chat_to_bottom(nonce=""):  # hotfix: auto scroll (v3 - nonce로 ifram
         function scrollChatToBottom() {{
             const doc = window.parent.document;
 
-            // 1순위: 대화 로그 맨 끝에 심어둔 앵커로 스크롤 (가장 정확함)
+            // 1순위: 대화 로그 맨 끝에 심어둔 앵커 → 앵커의 부모를 타고 올라가
+            // "실제 스크롤 가능한 대화창 컨테이너"만 찾아서 그 안에서만 스크롤한다.
+            // (anchor.scrollIntoView()는 페이지 전체 스크롤까지 같이 움직여서 사용하지 않음)
             const anchor = doc.getElementById("chat-bottom-anchor");
             if (anchor) {{
-                anchor.scrollIntoView({{ block: "end", inline: "nearest" }});
-                return;
+                let el = anchor.parentElement;
+                while (el) {{
+                    const style = window.parent.getComputedStyle(el);
+                    const isScrollable =
+                        style.overflowY === "auto" ||
+                        style.overflowY === "scroll" ||
+                        style.overflowY === "overlay";
+                    if (isScrollable && el.scrollHeight > el.clientHeight) {{
+                        el.scrollTop = el.scrollHeight;
+                        return;
+                    }}
+                    el = el.parentElement;
+                }}
             }}
 
             // 2순위(폴백): 스크롤 가능한 영역을 휴리스틱으로 탐색
