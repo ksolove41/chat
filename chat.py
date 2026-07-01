@@ -1,18 +1,10 @@
 import streamlit as st
-import streamlit.components.v1 as components  # hotfix: auto scroll
 from pathlib import Path
 from datetime import datetime
 import html
 import re
 import uuid
 import json
-import logging  # hotfix: 경고 로그 억제
-import warnings  # hotfix: 경고 로그 억제
-
-# hotfix: auto scroll (v4) - "replace st.components.v1.html with st.iframe" 등
-# Streamlit 내부 디프리케이션 경고가 터미널에 계속 찍히는 것을 조용히 시킴
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 
 # ═══════════════════════════════════════════
@@ -317,61 +309,57 @@ def mark_messages_read(room_name, user_name):
 # ═══════════════════════════════════════════
 # 자동 스크롤 유틸 (hotfix)
 # ═══════════════════════════════════════════
-def scroll_chat_to_bottom(nonce=""):  # hotfix: auto scroll (v3 - nonce로 iframe 강제 재실행)
-    components.html(
-        f"""
-        <!-- nonce: {nonce} -->
-        <script>
-        function scrollChatToBottom() {{
-            const doc = window.parent.document;
+def scroll_chat_to_bottom(nonce=""):  # hotfix: auto scroll (v5 - st.iframe로 전환)
+    html_code = f"""<!-- nonce: {nonce} -->
+<script>
+function scrollChatToBottom() {{
+    const doc = window.parent.document;
 
-            // 1순위: 대화 로그 맨 끝에 심어둔 앵커 → 앵커의 부모를 타고 올라가
-            // "실제 스크롤 가능한 대화창 컨테이너"만 찾아서 그 안에서만 스크롤한다.
-            // (anchor.scrollIntoView()는 페이지 전체 스크롤까지 같이 움직여서 사용하지 않음)
-            const anchor = doc.getElementById("chat-bottom-anchor");
-            if (anchor) {{
-                let el = anchor.parentElement;
-                while (el) {{
-                    const style = window.parent.getComputedStyle(el);
-                    const isScrollable =
-                        style.overflowY === "auto" ||
-                        style.overflowY === "scroll" ||
-                        style.overflowY === "overlay";
-                    if (isScrollable && el.scrollHeight > el.clientHeight) {{
-                        el.scrollTop = el.scrollHeight;
-                        return;
-                    }}
-                    el = el.parentElement;
-                }}
+    // 1순위: 대화 로그 맨 끝에 심어둔 앵커 → 앵커의 부모를 타고 올라가
+    // "실제 스크롤 가능한 대화창 컨테이너"만 찾아서 그 안에서만 스크롤한다.
+    // (anchor.scrollIntoView()는 페이지 전체 스크롤까지 같이 움직여서 사용하지 않음)
+    const anchor = doc.getElementById("chat-bottom-anchor");
+    if (anchor) {{
+        let el = anchor.parentElement;
+        while (el) {{
+            const style = window.parent.getComputedStyle(el);
+            const isScrollable =
+                style.overflowY === "auto" ||
+                style.overflowY === "scroll" ||
+                style.overflowY === "overlay";
+            if (isScrollable && el.scrollHeight > el.clientHeight) {{
+                el.scrollTop = el.scrollHeight;
+                return;
             }}
-
-            // 2순위(폴백): 스크롤 가능한 영역을 휴리스틱으로 탐색
-            const scrollAreas = Array.from(doc.querySelectorAll("div"))
-                .filter(el => {{
-                    const style = window.parent.getComputedStyle(el);
-                    const canScroll = el.scrollHeight > el.clientHeight;
-                    const isScrollable =
-                        style.overflowY === "auto" ||
-                        style.overflowY === "scroll" ||
-                        style.overflowY === "overlay";
-                    const isChatHeight = el.clientHeight >= 400 && el.clientHeight <= 700;
-
-                    return canScroll && isScrollable && isChatHeight;
-                }});
-
-            if (scrollAreas.length > 0) {{
-                const target = scrollAreas[scrollAreas.length - 1];
-                target.scrollTop = target.scrollHeight;
-            }}
+            el = el.parentElement;
         }}
+    }}
 
-        setTimeout(scrollChatToBottom, 100);
-        setTimeout(scrollChatToBottom, 400);
-        setTimeout(scrollChatToBottom, 900);
-        </script>
-        """,
-        height=0,
-    )
+    // 2순위(폴백): 스크롤 가능한 영역을 휴리스틱으로 탐색
+    const scrollAreas = Array.from(doc.querySelectorAll("div"))
+        .filter(el => {{
+            const style = window.parent.getComputedStyle(el);
+            const canScroll = el.scrollHeight > el.clientHeight;
+            const isScrollable =
+                style.overflowY === "auto" ||
+                style.overflowY === "scroll" ||
+                style.overflowY === "overlay";
+            const isChatHeight = el.clientHeight >= 400 && el.clientHeight <= 700;
+
+            return canScroll && isScrollable && isChatHeight;
+        }});
+
+    if (scrollAreas.length > 0) {{
+        const target = scrollAreas[scrollAreas.length - 1];
+        target.scrollTop = target.scrollHeight;
+    }}
+}}
+
+setTimeout(scrollChatToBottom, 100);
+setTimeout(scrollChatToBottom, 400);
+setTimeout(scrollChatToBottom, 900);
+</script>"""
+    st.iframe(html_code.strip(), height=0)  # hotfix: auto scroll (v5)
 
 
 # ═══════════════════════════════════════════
