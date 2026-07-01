@@ -310,23 +310,24 @@ def mark_messages_read(room_name, user_name):
 # ═══════════════════════════════════════════
 # 자동 스크롤 유틸 (hotfix)
 # ═══════════════════════════════════════════
-def scroll_chat_to_bottom():  # hotfix: auto scroll (v2 - anchor 기반)
+def scroll_chat_to_bottom(nonce=""):  # hotfix: auto scroll (v3 - nonce로 iframe 강제 재실행)
     components.html(
-        """
+        f"""
+        <!-- nonce: {nonce} -->
         <script>
-        function scrollChatToBottom() {
+        function scrollChatToBottom() {{
             const doc = window.parent.document;
 
             // 1순위: 대화 로그 맨 끝에 심어둔 앵커로 스크롤 (가장 정확함)
             const anchor = doc.getElementById("chat-bottom-anchor");
-            if (anchor) {
-                anchor.scrollIntoView({ block: "end", inline: "nearest" });
+            if (anchor) {{
+                anchor.scrollIntoView({{ block: "end", inline: "nearest" }});
                 return;
-            }
+            }}
 
             // 2순위(폴백): 스크롤 가능한 영역을 휴리스틱으로 탐색
             const scrollAreas = Array.from(doc.querySelectorAll("div"))
-                .filter(el => {
+                .filter(el => {{
                     const style = window.parent.getComputedStyle(el);
                     const canScroll = el.scrollHeight > el.clientHeight;
                     const isScrollable =
@@ -336,13 +337,13 @@ def scroll_chat_to_bottom():  # hotfix: auto scroll (v2 - anchor 기반)
                     const isChatHeight = el.clientHeight >= 400 && el.clientHeight <= 700;
 
                     return canScroll && isScrollable && isChatHeight;
-                });
+                }});
 
-            if (scrollAreas.length > 0) {
+            if (scrollAreas.length > 0) {{
                 const target = scrollAreas[scrollAreas.length - 1];
                 target.scrollTop = target.scrollHeight;
-            }
-        }
+            }}
+        }}
 
         setTimeout(scrollChatToBottom, 100);
         setTimeout(scrollChatToBottom, 400);
@@ -548,7 +549,10 @@ def render_chat_log(selected_room, search_keyword, current_user):
 
     # hotfix: auto scroll - 검색어가 없을 때만 맨 아래로 자동 스크롤
     if not search_keyword.strip():
-        scroll_chat_to_bottom()  # hotfix: auto scroll
+        # hotfix: auto scroll (v3) - 메시지 개수/마지막 id로 nonce를 만들어 iframe 재실행을 강제
+        last_msg_id = room_messages[-1].get("id", "") if room_messages else "empty"
+        scroll_nonce = f"{len(room_messages)}_{last_msg_id}"
+        scroll_chat_to_bottom(nonce=scroll_nonce)  # hotfix: auto scroll
 
 
 # ═══════════════════════════════════════════
