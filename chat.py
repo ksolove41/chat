@@ -6,6 +6,13 @@ import html
 import re
 import uuid
 import json
+import logging  # hotfix: 경고 로그 억제
+import warnings  # hotfix: 경고 로그 억제
+
+# hotfix: auto scroll (v4) - "replace st.components.v1.html with st.iframe" 등
+# Streamlit 내부 디프리케이션 경고가 터미널에 계속 찍히는 것을 조용히 시킴
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 
 # ═══════════════════════════════════════════
