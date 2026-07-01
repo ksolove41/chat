@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components  # hotfix: auto scroll
 from pathlib import Path
 from datetime import datetime
 import html
@@ -307,6 +308,43 @@ def mark_messages_read(room_name, user_name):
 
 
 # ═══════════════════════════════════════════
+# 자동 스크롤 유틸 (hotfix)
+# ═══════════════════════════════════════════
+def scroll_chat_to_bottom():  # hotfix: auto scroll
+    components.html(
+        """
+        <script>
+        function scrollChatToBottom() {
+            const doc = window.parent.document;
+
+            const scrollAreas = Array.from(doc.querySelectorAll("div"))
+                .filter(el => {
+                    const style = window.parent.getComputedStyle(el);
+                    const canScroll = el.scrollHeight > el.clientHeight;
+                    const isScrollable =
+                        style.overflowY === "auto" ||
+                        style.overflowY === "scroll";
+                    const isChatHeight = el.clientHeight >= 450 && el.clientHeight <= 650;
+
+                    return canScroll && isScrollable && isChatHeight;
+                });
+
+            if (scrollAreas.length > 0) {
+                const target = scrollAreas[scrollAreas.length - 1];
+                target.scrollTop = target.scrollHeight;
+            }
+        }
+
+        setTimeout(scrollChatToBottom, 100);
+        setTimeout(scrollChatToBottom, 400);
+        setTimeout(scrollChatToBottom, 900);
+        </script>
+        """,
+        height=0,
+    )
+
+
+# ═══════════════════════════════════════════
 # 페이지 설정 & 스타일
 # ═══════════════════════════════════════════
 st.set_page_config(page_title="프로젝트 대화 로그방", page_icon="💬", layout="wide")
@@ -495,6 +533,10 @@ def render_chat_log(selected_room, search_keyword, current_user):
                         toggle_reaction(msg_id, "따봉", current_user)
                         mark_messages_read(selected_room, current_user)
                         st.rerun()
+
+    # hotfix: auto scroll - 검색어가 없을 때만 맨 아래로 자동 스크롤
+    if not search_keyword.strip():
+        scroll_chat_to_bottom()  # hotfix: auto scroll
 
 
 # ═══════════════════════════════════════════
