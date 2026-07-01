@@ -310,21 +310,30 @@ def mark_messages_read(room_name, user_name):
 # ═══════════════════════════════════════════
 # 자동 스크롤 유틸 (hotfix)
 # ═══════════════════════════════════════════
-def scroll_chat_to_bottom():  # hotfix: auto scroll
+def scroll_chat_to_bottom():  # hotfix: auto scroll (v2 - anchor 기반)
     components.html(
         """
         <script>
         function scrollChatToBottom() {
             const doc = window.parent.document;
 
+            // 1순위: 대화 로그 맨 끝에 심어둔 앵커로 스크롤 (가장 정확함)
+            const anchor = doc.getElementById("chat-bottom-anchor");
+            if (anchor) {
+                anchor.scrollIntoView({ block: "end", inline: "nearest" });
+                return;
+            }
+
+            // 2순위(폴백): 스크롤 가능한 영역을 휴리스틱으로 탐색
             const scrollAreas = Array.from(doc.querySelectorAll("div"))
                 .filter(el => {
                     const style = window.parent.getComputedStyle(el);
                     const canScroll = el.scrollHeight > el.clientHeight;
                     const isScrollable =
                         style.overflowY === "auto" ||
-                        style.overflowY === "scroll";
-                    const isChatHeight = el.clientHeight >= 450 && el.clientHeight <= 650;
+                        style.overflowY === "scroll" ||
+                        style.overflowY === "overlay";
+                    const isChatHeight = el.clientHeight >= 400 && el.clientHeight <= 700;
 
                     return canScroll && isScrollable && isChatHeight;
                 });
@@ -533,6 +542,9 @@ def render_chat_log(selected_room, search_keyword, current_user):
                         toggle_reaction(msg_id, "따봉", current_user)
                         mark_messages_read(selected_room, current_user)
                         st.rerun()
+
+        # hotfix: auto scroll (v2) - 스크롤 타겟이 될 앵커를 대화 목록 맨 끝에 삽입
+        st.markdown('<div id="chat-bottom-anchor"></div>', unsafe_allow_html=True)  # hotfix: auto scroll
 
     # hotfix: auto scroll - 검색어가 없을 때만 맨 아래로 자동 스크롤
     if not search_keyword.strip():
