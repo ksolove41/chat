@@ -1,7 +1,10 @@
+import http.server
+import json
 import subprocess
 import sys
 import time
 import socket
+import threading
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -14,35 +17,22 @@ if sys.platform == "win32":
     import ctypes
     import ctypes.wintypes
 
-PORT = 8501
-TITLE = "프로젝트 대화 로그방"
-
-NOTIFY_JS = """
-(function() {
-    let lastCount = -1;
-    window.addEventListener('message', function(e) {
-        if (!e.data || e.data.type !== 'chatMsgCount') return;
-        const count = parseInt(e.data.count) || 0;
-        if (lastCount === -1) { lastCount = count; return; }
-        if (count > lastCount && !document.hasFocus()) {
-            try { window.pywebview.api.on_new_message(); } catch(ex) {}
-        }
-        lastCount = count;
-    });
-})();
-"""
+PORT       = 8501
+COUNT_PORT = 8502
+TITLE      = "프로젝트 대화 로그방"
 
 
+# ── Win32 작업표시줄 깜빡임 ─────────────────────
 def flash_taskbar(hwnd):
-    FLASHW_ALL = 0x00000003
+    FLASHW_ALL       = 0x00000003
     FLASHW_TIMERNOFG = 0x0000000C
 
     class FLASHWINFO(ctypes.Structure):
         _fields_ = [
-            ("cbSize", ctypes.c_uint),
-            ("hwnd",   ctypes.wintypes.HWND),
-            ("dwFlags",ctypes.c_uint),
-            ("uCount", ctypes.c_uint),
+            ("cbSize",    ctypes.c_uint),
+            ("hwnd",      ctypes.wintypes.HWND),
+            ("dwFlags",   ctypes.c_uint),
+            ("uCount",    ctypes.c_uint),
             ("dwTimeout", ctypes.c_uint),
         ]
 
@@ -56,18 +46,74 @@ def flash_taskbar(hwnd):
     ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
 
 
-class Api:
-    def __init__(self):
-        self._hwnd = None
-
-    def set_hwnd(self, hwnd):
-        self._hwnd = hwnd
-
-    def on_new_message(self):
-        if self._hwnd and sys.platform == "win32":
-            flash_taskbar(self._hwnd)
+def is_foreground(hwnd):
+    return ctypes.windll.user32.GetForegroundWindow() == hwnd
 
 
+def find_hwnd(title, retries=10):
+    for _ in range(retries):
+        hwnd = ctypes.windll.user32.FindWindowW(None, title)
+        if hwnd:
+            return hwnd
+        time.sleep(0.5)
+    return 0
+
+
+# ── 메시지 카운트 HTTP 서버 (클라이언트용) ─────
+def start_count_server(chat_dir: Path):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            try:
+                data = json.loads((chat_dir / "chat_messages.json").read_text(encoding="utf-8"))
+                count = len([m for m in data if isinstance(m, dict)])
+            except Exception:
+                count = 0
+            body = str(count).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", len(body))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    try:
+        srv = http.server.HTTPServer(("0.0.0.0", COUNT_PORT), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    except OSError:
+        pass  # 포트 사용 중이면 그냥 skip
+
+
+# ── 메시지 폴링 → 작업표시줄 깜빡임 ───────────
+def watch_and_flash(chat_dir: Path, hwnd_ref: list):
+    msg_file = chat_dir / "chat_messages.json"
+    last_count = -1
+    while True:
+        try:
+            if msg_file.exists():
+                data = json.loads(msg_file.read_text(encoding="utf-8"))
+                count = len([m for m in data if isinstance(m, dict)])
+            else:
+                count = 0
+        except Exception:
+            count = 0
+
+        if last_count == -1:
+            last_count = count
+        elif count > last_count:
+            last_count = count
+            hwnd = hwnd_ref[0]
+            if hwnd and not is_foreground(hwnd):
+                flash_taskbar(hwnd)
+        else:
+            last_count = count
+
+        time.sleep(2)
+
+
+# ── 유틸 ────────────────────────────────────────
 def get_base_dir():
     if hasattr(sys, "_MEIPASS"):
         return Path(sys.executable).parent
@@ -101,7 +147,7 @@ def find_streamlit_cmd():
     return None
 
 
-def start_streamlit(chat_py):
+def start_streamlit(chat_py: Path):
     base_cmd = find_streamlit_cmd()
     if base_cmd is None:
         return None, "Streamlit을 찾을 수 없습니다.\nPython과 Streamlit이 설치되어 있는지 확인하세요."
@@ -115,16 +161,10 @@ def start_streamlit(chat_py):
         "--server.enableCORS=false",
         "--server.enableXsrfProtection=false",
     ]
-
-    flags = 0
-    if sys.platform == "win32":
-        flags = subprocess.CREATE_NO_WINDOW
-
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     proc = subprocess.Popen(
-        cmd,
-        creationflags=flags,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        cmd, creationflags=flags,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=str(chat_py.parent),
     )
     return proc, None
@@ -142,9 +182,10 @@ def wait_for_server(port, timeout=30):
     return False
 
 
+# ── 메인 ────────────────────────────────────────
 def main():
     base_dir = get_base_dir()
-    chat_py = base_dir / "chat.py"
+    chat_py  = base_dir / "chat.py"
 
     if not chat_py.exists():
         root = tk.Tk(); root.withdraw()
@@ -163,30 +204,29 @@ def main():
         messagebox.showerror("오류", "서버 시작 시간 초과 (30초)")
         root.destroy(); return
 
-    local_ip = get_local_ip()
+    local_ip  = get_local_ip()
     win_title = f"{TITLE}  ─  서버 IP: {local_ip}:{PORT}"
 
-    api = Api()
+    start_count_server(chat_py.parent)
+
+    hwnd_ref = [0]
+
     win = webview.create_window(
         win_title,
         url=f"http://localhost:{PORT}",
         width=1280,
         height=800,
         min_size=(800, 600),
-        js_api=api,
     )
-
-    def on_loaded():
-        win.evaluate_js(NOTIFY_JS)
-
-    win.events.loaded += on_loaded
 
     def on_start():
         if sys.platform == "win32":
-            time.sleep(1)
-            hwnd = ctypes.windll.user32.FindWindowW(None, win_title)
-            if hwnd:
-                api.set_hwnd(hwnd)
+            hwnd_ref[0] = find_hwnd(win_title)
+        threading.Thread(
+            target=watch_and_flash,
+            args=(chat_py.parent, hwnd_ref),
+            daemon=True,
+        ).start()
 
     webview.start(func=on_start)
 

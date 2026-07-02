@@ -1,6 +1,7 @@
 import sys
 import json
 import time
+import threading
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -14,34 +15,21 @@ if sys.platform == "win32":
     import ctypes.wintypes
 
 DEFAULT_PORT = 8501
-TITLE = "프로젝트 대화 로그방"
-
-NOTIFY_JS = """
-(function() {
-    let lastCount = -1;
-    window.addEventListener('message', function(e) {
-        if (!e.data || e.data.type !== 'chatMsgCount') return;
-        const count = parseInt(e.data.count) || 0;
-        if (lastCount === -1) { lastCount = count; return; }
-        if (count > lastCount && !document.hasFocus()) {
-            try { window.pywebview.api.on_new_message(); } catch(ex) {}
-        }
-        lastCount = count;
-    });
-})();
-"""
+COUNT_PORT   = 8502
+TITLE        = "프로젝트 대화 로그방"
 
 
+# ── Win32 작업표시줄 깜빡임 ─────────────────────
 def flash_taskbar(hwnd):
-    FLASHW_ALL = 0x00000003
+    FLASHW_ALL       = 0x00000003
     FLASHW_TIMERNOFG = 0x0000000C
 
     class FLASHWINFO(ctypes.Structure):
         _fields_ = [
-            ("cbSize", ctypes.c_uint),
-            ("hwnd",   ctypes.wintypes.HWND),
-            ("dwFlags",ctypes.c_uint),
-            ("uCount", ctypes.c_uint),
+            ("cbSize",    ctypes.c_uint),
+            ("hwnd",      ctypes.wintypes.HWND),
+            ("dwFlags",   ctypes.c_uint),
+            ("uCount",    ctypes.c_uint),
             ("dwTimeout", ctypes.c_uint),
         ]
 
@@ -55,18 +43,47 @@ def flash_taskbar(hwnd):
     ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
 
 
-class Api:
-    def __init__(self):
-        self._hwnd = None
-
-    def set_hwnd(self, hwnd):
-        self._hwnd = hwnd
-
-    def on_new_message(self):
-        if self._hwnd and sys.platform == "win32":
-            flash_taskbar(self._hwnd)
+def is_foreground(hwnd):
+    return ctypes.windll.user32.GetForegroundWindow() == hwnd
 
 
+def find_hwnd(title, retries=10):
+    for _ in range(retries):
+        hwnd = ctypes.windll.user32.FindWindowW(None, title)
+        if hwnd:
+            return hwnd
+        time.sleep(0.5)
+    return 0
+
+
+# ── 서버 카운트 폴링 → 작업표시줄 깜빡임 ───────
+def get_remote_count(ip):
+    try:
+        resp = urllib.request.urlopen(f"http://{ip}:{COUNT_PORT}/", timeout=2)
+        return int(resp.read().decode().strip())
+    except Exception:
+        return -1
+
+
+def watch_and_flash(server_ip: str, hwnd_ref: list):
+    last_count = -1
+    while True:
+        count = get_remote_count(server_ip)
+
+        if last_count == -1:
+            last_count = count
+        elif count != -1 and count > last_count:
+            last_count = count
+            hwnd = hwnd_ref[0]
+            if hwnd and not is_foreground(hwnd):
+                flash_taskbar(hwnd)
+        elif count != -1:
+            last_count = count
+
+        time.sleep(2)
+
+
+# ── 설정 파일 ────────────────────────────────────
 def get_config_path():
     if hasattr(sys, "_MEIPASS"):
         return Path(sys.executable).parent / "chat_config.json"
@@ -90,6 +107,7 @@ def save_config(ip, port):
         json.dump({"server_ip": ip, "server_port": port}, f, ensure_ascii=False, indent=2)
 
 
+# ── 주소 입력 ────────────────────────────────────
 def ask_server_address(current=""):
     root = tk.Tk()
     root.withdraw()
@@ -119,16 +137,16 @@ def parse_address(addr):
 
 def check_server(ip, port, timeout=5):
     try:
-        url = f"http://{ip}:{port}/_stcore/health"
-        urllib.request.urlopen(url, timeout=timeout)
+        urllib.request.urlopen(f"http://{ip}:{port}/_stcore/health", timeout=timeout)
         return True
     except Exception:
         return False
 
 
+# ── 메인 ────────────────────────────────────────
 def main():
-    cfg = load_config()
-    server_ip = cfg.get("server_ip", "")
+    cfg         = load_config()
+    server_ip   = cfg.get("server_ip", "")
     server_port = cfg.get("server_port", DEFAULT_PORT)
 
     if not server_ip:
@@ -153,27 +171,24 @@ def main():
 
     save_config(server_ip, server_port)
 
-    api = Api()
+    hwnd_ref = [0]
+
     win = webview.create_window(
         TITLE,
         url=f"http://{server_ip}:{server_port}",
         width=1280,
         height=800,
         min_size=(800, 600),
-        js_api=api,
     )
-
-    def on_loaded():
-        win.evaluate_js(NOTIFY_JS)
-
-    win.events.loaded += on_loaded
 
     def on_start():
         if sys.platform == "win32":
-            time.sleep(1)
-            hwnd = ctypes.windll.user32.FindWindowW(None, TITLE)
-            if hwnd:
-                api.set_hwnd(hwnd)
+            hwnd_ref[0] = find_hwnd(TITLE)
+        threading.Thread(
+            target=watch_and_flash,
+            args=(server_ip, hwnd_ref),
+            daemon=True,
+        ).start()
 
     webview.start(func=on_start)
 
