@@ -24,14 +24,62 @@
 | 언어 | Python 3.x |
 | 프레임워크 | Streamlit |
 | 데이터 저장 | JSON 파일 |
+| 데스크톱 창 | pywebview (Edge WebView2) |
 
-## 설치 및 실행
+## 실행 방법
+
+### 방법 1 — 데스크톱 앱으로 실행 (권장)
+
+팀원들이 브라우저 없이 전용 앱 창에서 채팅합니다.
+
+#### 서버 PC (1대)
 
 ```bash
 # 의존성 설치
 pip install -r requirements.txt
 
-# 앱 실행
+# 서버 실행 (앱 창 + Streamlit 자동 시작)
+python server_launcher.py
+```
+
+앱 창 제목에 **서버 IP** 가 표시됩니다. 이 IP를 팀원에게 공유하세요.
+
+#### 클라이언트 PC (팀원 각자)
+
+```bash
+# 클라이언트 실행
+python client_launcher.py
+```
+
+최초 실행 시 서버 IP 입력 팝업이 뜹니다. 이후에는 자동 접속됩니다.
+
+---
+
+### 방법 2 — exe 빌드 후 배포
+
+Python이 없는 PC에도 배포 가능합니다.
+
+```bash
+# 빌드 도구 설치
+pip install pyinstaller
+
+# 빌드 실행 (build.bat 더블클릭 또는 아래 명령)
+build.bat
+```
+
+빌드 결과물 (`dist\` 폴더):
+
+| 파일 | 배포 대상 | 비고 |
+|---|---|---|
+| `server.exe` | 서버 PC | `chat.py` 와 같은 폴더에 둘 것 |
+| `client.exe` | 팀원 PC | 단독 실행, Python 불필요 |
+
+---
+
+### 방법 3 — 브라우저로 직접 접속
+
+```bash
+pip install -r requirements.txt
 streamlit run chat.py
 ```
 
@@ -60,8 +108,11 @@ ADMIN_NAME = "김시온"
 
 ```
 chat/
-├── chat.py              # 메인 앱
-├── requirements.txt     # 의존성
+├── chat.py                # 메인 앱
+├── server_launcher.py     # 서버 실행 런처
+├── client_launcher.py     # 클라이언트 접속 런처
+├── build.bat              # exe 빌드 스크립트
+├── requirements.txt       # 의존성
 ├── .gitignore
 └── README.md
 ```
@@ -75,3 +126,4 @@ chat/
 > | `chat_rooms.json` | 채팅방 목록 |
 > | `chat_issues.json` | 자동 등록된 이슈 목록 |
 > | `chat_uploads/` | 첨부 이미지 파일 |
+> | `chat_config.json` | 클라이언트 서버 IP 설정 |
