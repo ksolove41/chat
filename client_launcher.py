@@ -1,5 +1,6 @@
 import sys
 import json
+import time
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -8,8 +9,62 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox
 import webview
 
+if sys.platform == "win32":
+    import ctypes
+    import ctypes.wintypes
+
 DEFAULT_PORT = 8501
 TITLE = "프로젝트 대화 로그방"
+
+NOTIFY_JS = """
+(function() {
+    let lastCount = -1;
+    window.addEventListener('message', function(e) {
+        if (!e.data || e.data.type !== 'chatMsgCount') return;
+        const count = parseInt(e.data.count) || 0;
+        if (lastCount === -1) { lastCount = count; return; }
+        if (count > lastCount && !document.hasFocus()) {
+            try { window.pywebview.api.on_new_message(); } catch(ex) {}
+        }
+        lastCount = count;
+    });
+})();
+"""
+
+
+def flash_taskbar(hwnd):
+    FLASHW_ALL = 0x00000003
+    FLASHW_TIMERNOFG = 0x0000000C
+
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_uint),
+            ("hwnd",   ctypes.wintypes.HWND),
+            ("dwFlags",ctypes.c_uint),
+            ("uCount", ctypes.c_uint),
+            ("dwTimeout", ctypes.c_uint),
+        ]
+
+    fi = FLASHWINFO(
+        cbSize=ctypes.sizeof(FLASHWINFO),
+        hwnd=hwnd,
+        dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
+        uCount=0,
+        dwTimeout=0,
+    )
+    ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
+
+
+class Api:
+    def __init__(self):
+        self._hwnd = None
+
+    def set_hwnd(self, hwnd):
+        self._hwnd = hwnd
+
+    def on_new_message(self):
+        if self._hwnd and sys.platform == "win32":
+            flash_taskbar(self._hwnd)
 
 
 def get_config_path():
@@ -49,7 +104,6 @@ def ask_server_address(current=""):
 
 
 def parse_address(addr):
-    """'IP:PORT' 또는 'IP' 파싱 → (ip, port)"""
     if ":" in addr:
         parts = addr.rsplit(":", 1)
         ip = parts[0].strip()
@@ -84,8 +138,7 @@ def main():
         server_ip, server_port = parse_address(addr)
 
     if not check_server(server_ip, server_port):
-        root = tk.Tk()
-        root.withdraw()
+        root = tk.Tk(); root.withdraw()
         retry = messagebox.askyesno(
             "연결 실패",
             f"서버에 접속할 수 없습니다.\n{server_ip}:{server_port}\n\n주소를 다시 입력하시겠습니까?",
@@ -100,14 +153,29 @@ def main():
 
     save_config(server_ip, server_port)
 
-    webview.create_window(
+    api = Api()
+    win = webview.create_window(
         TITLE,
         url=f"http://{server_ip}:{server_port}",
         width=1280,
         height=800,
         min_size=(800, 600),
+        js_api=api,
     )
-    webview.start()
+
+    def on_loaded():
+        win.evaluate_js(NOTIFY_JS)
+
+    win.events.loaded += on_loaded
+
+    def on_start():
+        if sys.platform == "win32":
+            time.sleep(1)
+            hwnd = ctypes.windll.user32.FindWindowW(None, TITLE)
+            if hwnd:
+                api.set_hwnd(hwnd)
+
+    webview.start(func=on_start)
 
 
 if __name__ == "__main__":

@@ -10,8 +10,62 @@ import tkinter as tk
 from tkinter import messagebox
 import webview
 
+if sys.platform == "win32":
+    import ctypes
+    import ctypes.wintypes
+
 PORT = 8501
 TITLE = "프로젝트 대화 로그방"
+
+NOTIFY_JS = """
+(function() {
+    let lastCount = -1;
+    window.addEventListener('message', function(e) {
+        if (!e.data || e.data.type !== 'chatMsgCount') return;
+        const count = parseInt(e.data.count) || 0;
+        if (lastCount === -1) { lastCount = count; return; }
+        if (count > lastCount && !document.hasFocus()) {
+            try { window.pywebview.api.on_new_message(); } catch(ex) {}
+        }
+        lastCount = count;
+    });
+})();
+"""
+
+
+def flash_taskbar(hwnd):
+    FLASHW_ALL = 0x00000003
+    FLASHW_TIMERNOFG = 0x0000000C
+
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_uint),
+            ("hwnd",   ctypes.wintypes.HWND),
+            ("dwFlags",ctypes.c_uint),
+            ("uCount", ctypes.c_uint),
+            ("dwTimeout", ctypes.c_uint),
+        ]
+
+    fi = FLASHWINFO(
+        cbSize=ctypes.sizeof(FLASHWINFO),
+        hwnd=hwnd,
+        dwFlags=FLASHW_ALL | FLASHW_TIMERNOFG,
+        uCount=0,
+        dwTimeout=0,
+    )
+    ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
+
+
+class Api:
+    def __init__(self):
+        self._hwnd = None
+
+    def set_hwnd(self, hwnd):
+        self._hwnd = hwnd
+
+    def on_new_message(self):
+        if self._hwnd and sys.platform == "win32":
+            flash_taskbar(self._hwnd)
 
 
 def get_base_dir():
@@ -93,38 +147,48 @@ def main():
     chat_py = base_dir / "chat.py"
 
     if not chat_py.exists():
-        root = tk.Tk()
-        root.withdraw()
+        root = tk.Tk(); root.withdraw()
         messagebox.showerror("오류", f"chat.py를 찾을 수 없습니다.\n경로: {chat_py}")
-        root.destroy()
-        return
+        root.destroy(); return
 
     proc, err = start_streamlit(chat_py)
     if err:
-        root = tk.Tk()
-        root.withdraw()
+        root = tk.Tk(); root.withdraw()
         messagebox.showerror("오류", err)
-        root.destroy()
-        return
+        root.destroy(); return
 
     if not wait_for_server(PORT, 30):
         proc.terminate()
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("오류", "서버 시작 시간 초과 (30초)\nStreamlit이 응답하지 않습니다.")
-        root.destroy()
-        return
+        root = tk.Tk(); root.withdraw()
+        messagebox.showerror("오류", "서버 시작 시간 초과 (30초)")
+        root.destroy(); return
 
     local_ip = get_local_ip()
+    win_title = f"{TITLE}  ─  서버 IP: {local_ip}:{PORT}"
 
-    webview.create_window(
-        f"{TITLE}  ─  서버 IP: {local_ip}:{PORT}",
+    api = Api()
+    win = webview.create_window(
+        win_title,
         url=f"http://localhost:{PORT}",
         width=1280,
         height=800,
         min_size=(800, 600),
+        js_api=api,
     )
-    webview.start()
+
+    def on_loaded():
+        win.evaluate_js(NOTIFY_JS)
+
+    win.events.loaded += on_loaded
+
+    def on_start():
+        if sys.platform == "win32":
+            time.sleep(1)
+            hwnd = ctypes.windll.user32.FindWindowW(None, win_title)
+            if hwnd:
+                api.set_hwnd(hwnd)
+
+    webview.start(func=on_start)
 
     proc.terminate()
     try:

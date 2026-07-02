@@ -460,6 +460,7 @@ st.caption("내부망에서 프로젝트별 대화 로그를 남기기 위한 St
 def render_chat_log(selected_room, search_keyword, current_user):
     messages = load_messages()
     room_msgs = [m for m in messages if m["방이름"] == selected_room]
+    st.html(f'<script>window.parent.postMessage({{type:"chatMsgCount",count:{len(room_msgs)}}},"*")</script>')
 
     if search_keyword.strip():
         kw = search_keyword.strip().lower()
