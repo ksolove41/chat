@@ -10,14 +10,15 @@ import json
 # ═══════════════════════════════════════════
 # 설정
 # ═══════════════════════════════════════════
-ADMIN_NAME = "김시온"
-ROOM_FILE      = Path("chat_rooms.json")
-MESSAGE_FILE   = Path("chat_messages.json")   # 5개 필드만 저장
-REACTIONS_FILE = Path("chat_reactions.json")  # {msg_id: {key: [users]}}
-READS_FILE     = Path("chat_reads.json")      # {msg_id: [users]}
-ISSUE_FILE     = Path("chat_issues.json")
+ADMIN_NAME   = "김시온"
+ROOM_FILE    = Path("chat_rooms.json")
+MESSAGE_FILE = Path("chat_messages.json")  # 5개 필드만
+META_FILE    = Path("chat_meta.json")      # 반응·읽음·첨부 통합 {msg_id: {...}}
+ISSUE_FILE   = Path("chat_issues.json")
+UPLOAD_DIR   = Path("chat_uploads")
 
-# 반응 이모지 설정: (저장 키, 표시 이모지)
+IMAGE_TYPES = ["png", "jpg", "jpeg", "gif", "webp"]
+
 REACTION_TYPES = [
     ("OK",   "\U0001f44c"),
     ("따봉", "\U0001f44d"),
@@ -30,7 +31,7 @@ LOG_FIELDS = ["id", "일시", "방이름", "작성자", "메시지"]
 
 
 # ═══════════════════════════════════════════
-# JSON 유틸 (리스트용 / 딕셔너리용)
+# JSON 유틸
 # ═══════════════════════════════════════════
 def _load_list(path):
     if not path.exists():
@@ -65,12 +66,12 @@ def _save_dict(path, data):
 
 
 def init_json_files():
+    UPLOAD_DIR.mkdir(exist_ok=True)
     for f in [ROOM_FILE, MESSAGE_FILE, ISSUE_FILE]:
         if not f.exists():
             _save_list(f, [])
-    for f in [REACTIONS_FILE, READS_FILE]:
-        if not f.exists():
-            _save_dict(f, {})
+    if not META_FILE.exists():
+        _save_dict(META_FILE, {})
 
 
 # ─── 메시지 ───────────────────────────────
@@ -92,26 +93,26 @@ def load_messages():
 
 
 def save_messages(messages):
-    # 5개 필드만 저장
     _save_list(MESSAGE_FILE, [{k: m[k] for k in LOG_FIELDS if k in m} for m in messages])
 
 
-# ─── 반응 ────────────────────────────────
-def load_reactions():
-    return _load_dict(REACTIONS_FILE)
+# ─── 메타 (반응 + 읽음 + 첨부) ────────────
+def load_meta():
+    return _load_dict(META_FILE)
 
 
-def save_reactions(data):
-    _save_dict(REACTIONS_FILE, data)
+def save_meta(data):
+    _save_dict(META_FILE, data)
 
 
-# ─── 읽음 ────────────────────────────────
-def load_reads():
-    return _load_dict(READS_FILE)
-
-
-def save_reads(data):
-    _save_dict(READS_FILE, data)
+def get_msg_meta(meta, msg_id):
+    return meta.get(msg_id, {
+        "reactions": {k: [] for k in REACTION_KEYS},
+        "reads": [],
+        "attach_name": "",
+        "attach_path": "",
+        "attach_type": "",
+    })
 
 
 # ─── 방 ──────────────────────────────────
@@ -181,6 +182,24 @@ def is_admin():
     return st.session_state.get("user_name", "").strip() == ADMIN_NAME
 
 
+def sanitize_filename(filename):
+    return re.sub(r'[\\/:*?"<>|]', "_", filename.strip())
+
+
+def save_uploaded_image(uploaded_file):
+    if uploaded_file is None:
+        return "", "", ""
+    original_name = sanitize_filename(uploaded_file.name)
+    ext = original_name.split(".")[-1].lower()
+    if ext not in IMAGE_TYPES:
+        return "", "", ""
+    saved_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{original_name}"
+    saved_path = UPLOAD_DIR / saved_name
+    with open(saved_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return original_name, str(saved_path), ext
+
+
 def parse_issue_from_message(message):
     if "이슈제목" not in message or "재현경로" not in message:
         return None
@@ -217,10 +236,16 @@ def delete_room(room_name):
     save_issues([i for i in load_issues() if i.get("방이름") != room_name])
 
     if msg_ids:
-        reactions = {k: v for k, v in load_reactions().items() if k not in msg_ids}
-        reads     = {k: v for k, v in load_reads().items()     if k not in msg_ids}
-        save_reactions(reactions)
-        save_reads(reads)
+        meta = {k: v for k, v in load_meta().items() if k not in msg_ids}
+        # 첨부 파일도 삭제
+        for mid in msg_ids:
+            p = Path(load_meta().get(mid, {}).get("attach_path", ""))
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+        save_meta(meta)
 
 
 def join_room(room_name, user_name):
@@ -256,7 +281,7 @@ def get_room_participants(room_name):
 # ═══════════════════════════════════════════
 # 메시지 기능
 # ═══════════════════════════════════════════
-def add_message(room_name, user_name, message):
+def add_message(room_name, user_name, message, uploaded_file=None):
     msg_id = str(uuid.uuid4())
     ts     = now_text()
 
@@ -264,9 +289,16 @@ def add_message(room_name, user_name, message):
     messages.append({"id": msg_id, "일시": ts, "방이름": room_name, "작성자": user_name, "메시지": message})
     save_messages(messages)
 
-    reads = load_reads()
-    reads[msg_id] = [user_name]
-    save_reads(reads)
+    attach_name, attach_path, attach_type = save_uploaded_image(uploaded_file)
+    meta = load_meta()
+    meta[msg_id] = {
+        "reactions":   {k: [] for k in REACTION_KEYS},
+        "reads":       [user_name],
+        "attach_name": attach_name,
+        "attach_path": attach_path,
+        "attach_type": attach_type,
+    }
+    save_meta(meta)
 
     parsed = parse_issue_from_message(message)
     if parsed:
@@ -280,33 +312,33 @@ def add_message(room_name, user_name, message):
 
 
 def toggle_reaction(msg_id, reaction_key, user_name):
-    reactions = load_reactions()
-    msg_r = reactions.get(msg_id, {k: [] for k in REACTION_KEYS})
-    users = list(msg_r.get(reaction_key, []))
+    meta  = load_meta()
+    entry = get_msg_meta(meta, msg_id)
+    users = list(entry["reactions"].get(reaction_key, []))
     if user_name in users:
         users.remove(user_name)
     else:
         users.append(user_name)
-    msg_r[reaction_key] = users
-    reactions[msg_id] = msg_r
-    save_reactions(reactions)
+    entry["reactions"][reaction_key] = users
+    meta[msg_id] = entry
+    save_meta(meta)
 
 
 def mark_messages_read(room_name, user_name):
     messages = load_messages()
-    reads    = load_reads()
+    meta     = load_meta()
     changed  = False
     for msg in messages:
         if msg["방이름"] != room_name:
             continue
-        mid     = msg["id"]
-        readers = list(reads.get(mid, []))
-        if user_name not in readers:
-            readers.append(user_name)
-            reads[mid] = readers
+        mid   = msg["id"]
+        entry = get_msg_meta(meta, mid)
+        if user_name not in entry["reads"]:
+            entry["reads"].append(user_name)
+            meta[mid] = entry
             changed = True
     if changed:
-        save_reads(reads)
+        save_meta(meta)
 
 
 # ═══════════════════════════════════════════
@@ -413,6 +445,8 @@ if "selected_room" not in st.session_state:
     st.session_state.selected_room = ""
 if "message_box_key" not in st.session_state:
     st.session_state.message_box_key = 0
+if "image_box_key" not in st.session_state:
+    st.session_state.image_box_key = 0
 
 
 st.title("\U0001f4ac 프로젝트 대화 로그방")
@@ -440,9 +474,7 @@ def render_chat_log(selected_room, search_keyword, current_user):
         return
 
     room_msgs = sorted(room_msgs, key=lambda x: x.get("일시", ""))
-
-    all_reactions = load_reactions()
-    all_reads     = load_reads()
+    all_meta  = load_meta()
     n = len(REACTION_TYPES)
 
     with st.container(height=520):
@@ -452,8 +484,11 @@ def render_chat_log(selected_room, search_keyword, current_user):
             css_class    = "chat-right" if is_mine else "chat-left"
             msg_id       = row.get("id", "")
             message_text = row.get("메시지", "").strip()
-            reactions    = all_reactions.get(msg_id, {k: [] for k in REACTION_KEYS})
-            read_count   = len(all_reads.get(msg_id, []))
+            entry        = get_msg_meta(all_meta, msg_id)
+            reactions    = entry["reactions"]
+            read_count   = len(entry["reads"])
+            attach_name  = entry.get("attach_name", "")
+            attach_path  = entry.get("attach_path", "")
 
             is_issue    = "이슈제목" in message_text and "재현경로" in message_text
             issue_badge = '<br><span class="issue-badge">\U0001f41b 이슈 등록됨</span>' if is_issue else ""
@@ -465,6 +500,11 @@ def render_chat_log(selected_room, search_keyword, current_user):
                 {issue_badge}
             </div>
             """)
+
+            if attach_path and Path(attach_path).exists():
+                st.image(attach_path, caption=f"\U0001f5bc️ {attach_name}", width=320)
+            elif attach_name:
+                st.warning(f"첨부 이미지를 찾을 수 없어: {attach_name}")
 
             if is_mine:
                 all_cols = st.columns([3, 1] + [1] * n)
@@ -614,8 +654,8 @@ with right:
                         st.success("방과 로그를 삭제했어요.")
                         st.rerun()
 
-        room_issues  = [i for i in load_issues() if i.get("방이름") == selected_room]
-        issue_count  = len(room_issues)
+        room_issues = [i for i in load_issues() if i.get("방이름") == selected_room]
+        issue_count = len(room_issues)
         with st.expander(f"\U0001f525 등록 결함 핵심 요약 ({issue_count}건)", expanded=issue_count > 0):
             if not room_issues:
                 st.caption("이 방에 등록된 이슈가 없어요.")
@@ -663,7 +703,7 @@ with right:
         st.caption("\U0001f4a1 이슈 등록: 메시지에 **이슈제목:** 과 **재현경로:** 를 포함하면 이슈 요약에 자동 등록돼요.")
 
         with st.form("message_form", clear_on_submit=False):
-            col_input, col_send = st.columns([9, 1])
+            col_input, col_image, col_send = st.columns([7, 2, 1])
             with col_input:
                 message = st.text_input(
                     "메시지 입력",
@@ -671,21 +711,30 @@ with right:
                     label_visibility="collapsed",
                     key=f"msg_{st.session_state.message_box_key}",
                 )
+            with col_image:
+                uploaded_image = st.file_uploader(
+                    "이미지",
+                    type=IMAGE_TYPES,
+                    label_visibility="collapsed",
+                    key=f"img_{st.session_state.image_box_key}",
+                )
             with col_send:
                 submitted = st.form_submit_button("\U0001f680", use_container_width=True)
 
             if submitted:
                 if not st.session_state.user_name:
                     st.warning("먼저 왼쪽에서 이름을 설정해줘.")
-                elif not message.strip():
-                    st.warning("메시지를 입력해줘.")
+                elif not message.strip() and uploaded_image is None:
+                    st.warning("메시지나 이미지를 입력해줘.")
                 else:
                     join_room(selected_room, st.session_state.user_name)
                     add_message(
                         room_name=selected_room,
                         user_name=st.session_state.user_name,
                         message=message.strip(),
+                        uploaded_file=uploaded_image,
                     )
                     mark_messages_read(selected_room, st.session_state.user_name)
                     st.session_state.message_box_key += 1
+                    st.session_state.image_box_key   += 1
                     st.rerun()
