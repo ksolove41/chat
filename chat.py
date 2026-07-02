@@ -19,6 +19,18 @@ UPLOAD_DIR = Path("chat_uploads")
 ROOM_COLUMNS = ["방이름", "생성일시", "참여자"]
 IMAGE_TYPES = ["png", "jpg", "jpeg", "gif", "webp"]
 
+# 반응 이모지 설정: (저장 키, 표시 이모지)
+REACTION_TYPES = [
+    ("OK",   "👌"),
+    ("따봉", "👍"),
+    ("😭",   "😭"),
+    ("✅",   "✅"),
+]
+REACTION_KEYS = [rt[0] for rt in REACTION_TYPES]
+
+# 로그 다운로드에 포함할 필드 (5개만)
+LOG_FIELDS = ["id", "일시", "방이름", "작성자", "메시지"]
+
 
 # ═══════════════════════════════════════════
 # JSON 유틸
@@ -50,22 +62,19 @@ def _normalize_message(row):
     if not isinstance(row, dict):
         return None
     msg = {
-        "id": str(row.get("id") or uuid.uuid4()),
-        "일시": str(row.get("일시", "")),
-        "방이름": str(row.get("방이름", "")),
-        "작성자": str(row.get("작성자", "")),
-        "메시지": str(row.get("메시지", "")),
+        "id":       str(row.get("id") or uuid.uuid4()),
+        "일시":     str(row.get("일시", "")),
+        "방이름":   str(row.get("방이름", "")),
+        "작성자":   str(row.get("작성자", "")),
+        "메시지":   str(row.get("메시지", "")),
         "첨부파일명": str(row.get("첨부파일명", "")),
         "첨부경로": str(row.get("첨부경로", "")),
         "첨부타입": str(row.get("첨부타입", "")),
     }
     r = row.get("반응")
     if not isinstance(r, dict):
-        r = {"OK": [], "따봉": []}
-    msg["반응"] = {
-        "OK": [str(u) for u in r.get("OK", [])],
-        "따봉": [str(u) for u in r.get("따봉", [])],
-    }
+        r = {}
+    msg["반응"] = {key: [str(u) for u in r.get(key, [])] for key in REACTION_KEYS}
     read_raw = row.get("읽음", [])
     msg["읽음"] = [str(u) for u in read_raw] if isinstance(read_raw, list) else []
     return msg
@@ -77,9 +86,9 @@ def _normalize_rooms(rows):
         if not isinstance(row, dict):
             continue
         result.append({
-            "방이름": str(row.get("방이름", "")),
+            "방이름":   str(row.get("방이름", "")),
             "생성일시": str(row.get("생성일시", "")),
-            "참여자": str(row.get("참여자", "")),
+            "참여자":   str(row.get("참여자", "")),
         })
     return result
 
@@ -160,7 +169,9 @@ def save_uploaded_image(uploaded_file):
 
 
 def make_json_download(data):
-    return json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    # LOG_FIELDS 5개 컬럼만 포함 (반응·읽음 등 메타 제외)
+    filtered = [{k: m.get(k, "") for k in LOG_FIELDS} for m in data]
+    return json.dumps(filtered, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 def parse_issue_from_message(message):
@@ -247,16 +258,16 @@ def add_message(room_name, user_name, message, uploaded_file=None):
     msg_id = str(uuid.uuid4())
     ts = now_text()
     messages.append({
-        "id": msg_id,
-        "일시": ts,
-        "방이름": room_name,
-        "작성자": user_name,
-        "메시지": message,
+        "id":       msg_id,
+        "일시":     ts,
+        "방이름":   room_name,
+        "작성자":   user_name,
+        "메시지":   message,
         "첨부파일명": attach_name,
         "첨부경로": attach_path,
         "첨부타입": attach_type,
-        "반응": {"OK": [], "따봉": []},
-        "읽음": [user_name],  # 발신자는 즉시 읽음
+        "반응":     {key: [] for key in REACTION_KEYS},
+        "읽음":     [user_name],  # 발신자는 즉시 읽음
     })
     save_messages(messages)
 
@@ -265,13 +276,13 @@ def add_message(room_name, user_name, message, uploaded_file=None):
         title, repro = parsed
         issues = load_issues()
         issues.append({
-            "id": str(uuid.uuid4()),
-            "방이름": room_name,
+            "id":       str(uuid.uuid4()),
+            "방이름":   room_name,
             "메시지_id": msg_id,
             "이슈제목": title,
             "재현경로": repro,
-            "작성자": user_name,
-            "일시": ts,
+            "작성자":   user_name,
+            "일시":     ts,
         })
         save_issues(issues)
 
@@ -291,7 +302,6 @@ def toggle_reaction(msg_id, reaction_type, user_name):
 
 
 def mark_messages_read(room_name, user_name):
-    """현재 방의 모든 메시지를 읽음으로 표시. 변경이 있을 때만 저장."""
     messages = load_messages()
     changed = False
     for msg in messages:
@@ -367,6 +377,7 @@ setTimeout(scrollChatToBottom, 900);
 # ═══════════════════════════════════════════
 st.set_page_config(page_title="프로젝트 대화 로그방", page_icon="💬", layout="wide")
 
+# CSS는 st.markdown으로 전역 주입 (Streamlit 표준 패턴)
 st.markdown("""
 <style>
 html, body, [class*="css"] {
@@ -376,7 +387,7 @@ html, body, [class*="css"] {
 .stButton button {
     font-weight: 900 !important;
     border-radius: 14px !important;
-    padding: 0.55rem 0.8rem !important;
+    padding: 0.35rem 0.6rem !important;
 }
 .chat-left {
     max-width: 75%;
@@ -494,63 +505,61 @@ def render_chat_log(selected_room, search_keyword, current_user):
 
     room_messages = sorted(room_messages, key=lambda x: x.get("일시", ""))
 
+    n = len(REACTION_TYPES)
+
     with st.container(height=520):
         for row in room_messages:
-            writer = row.get("작성자", "")
-            is_mine = writer == current_user
-            css_class = "chat-right" if is_mine else "chat-left"
-            msg_id = row.get("id", "")
+            writer     = row.get("작성자", "")
+            is_mine    = writer == current_user
+            css_class  = "chat-right" if is_mine else "chat-left"
+            msg_id     = row.get("id", "")
             message_text = row.get("메시지", "").strip()
-            attach_name = row.get("첨부파일명", "").strip()
-            attach_path = row.get("첨부경로", "").strip()
-            reactions = row.get("반응", {"OK": [], "따봉": []})
-            read_count = len(row.get("읽음", []))
+            attach_name  = row.get("첨부파일명", "").strip()
+            attach_path  = row.get("첨부경로", "").strip()
+            reactions    = row.get("반응", {})
+            read_count   = len(row.get("읽음", []))
 
-            is_issue = "이슈제목" in message_text and "재현경로" in message_text
+            is_issue   = "이슈제목" in message_text and "재현경로" in message_text
             issue_badge = '<br><span class="issue-badge">🐛 이슈 등록됨</span>' if is_issue else ""
 
-            st.markdown(f"""
+            # 채팅 버블 — st.html() 로 렌더링 (deprecated 경고 없음)
+            st.html(f"""
             <div class="{css_class}">
                 <div class="chat-meta">🕒 {safe_text(row.get("일시", ""))} · 👤 {safe_text(writer)}</div>
                 <div class="chat-message">{safe_text(message_text)}</div>
                 {issue_badge}
             </div>
-            """, unsafe_allow_html=True)
+            """)
 
             if attach_path and Path(attach_path).exists():
                 st.image(attach_path, caption=f"🖼️ {attach_name}", width=320)
             elif attach_name:
                 st.warning(f"첨부 이미지 파일을 찾을 수 없어: {attach_name}")
 
-            # 반응 버튼 + 읽음 표시
-            ok_users = reactions.get("OK", [])
-            thumbs_users = reactions.get("따봉", [])
-            ok_label = f"👌 {len(ok_users)}" if ok_users else "👌"
-            tb_label = f"👍 {len(thumbs_users)}" if thumbs_users else "👍"
-            read_html = f'<div class="read-badge">👁️ {read_count}</div>' if read_count > 0 else ""
-
+            # ── 반응 버튼 + 읽음 표시 ──────────────────────────
+            # 레이아웃: [여백] [👁️읽음] [반응×8]  또는 반대
             if is_mine:
-                _, col_read, col_ok, col_tb = st.columns([5, 1, 2, 2])
+                all_cols = st.columns([3, 1] + [1] * n)
+                col_read = all_cols[1]
+                r_cols   = all_cols[2:]
             else:
-                col_ok, col_tb, col_read, _ = st.columns([2, 2, 1, 5])
+                all_cols = st.columns([1] * n + [1, 3])
+                r_cols   = all_cols[:n]
+                col_read = all_cols[n]
 
             with col_read:
-                if read_html:
-                    st.markdown(read_html, unsafe_allow_html=True)
+                if read_count > 0:
+                    st.html(f'<div class="read-badge">👁️ {read_count}</div>')
 
-            with col_ok:
-                if st.button(ok_label, key=f"ok_{msg_id}"):
-                    if current_user:
-                        toggle_reaction(msg_id, "OK", current_user)
-                        mark_messages_read(selected_room, current_user)
-                        st.rerun()
-
-            with col_tb:
-                if st.button(tb_label, key=f"tb_{msg_id}"):
-                    if current_user:
-                        toggle_reaction(msg_id, "따봉", current_user)
-                        mark_messages_read(selected_room, current_user)
-                        st.rerun()
+            for i, (key, emoji) in enumerate(REACTION_TYPES):
+                users = reactions.get(key, [])
+                label = f"{emoji} {len(users)}" if users else emoji
+                with r_cols[i]:
+                    if st.button(label, key=f"react_{key}_{msg_id}"):
+                        if current_user:
+                            toggle_reaction(msg_id, key, current_user)
+                            mark_messages_read(selected_room, current_user)
+                            st.rerun()
 
         # hotfix: auto scroll (v2) - 스크롤 타겟이 될 앵커를 대화 목록 맨 끝에 삽입
         st.markdown('<div id="chat-bottom-anchor"></div>', unsafe_allow_html=True)  # hotfix: auto scroll
@@ -646,14 +655,9 @@ with right:
     if not selected_room:
         st.info("왼쪽에서 방을 만들거나 선택해줘.")
     else:
-        st.markdown(
-            f'<div class="room-title">🚪 현재 방: {safe_text(selected_room)}</div>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            '<div class="small-guide">메시지를 입력하고 Enter를 누르거나, 오른쪽 🚀 버튼을 누르면 바로 저장돼요.</div>',
-            unsafe_allow_html=True
-        )
+        # st.html() — 순수 HTML 렌더링, unsafe_allow_html 불필요
+        st.html(f'<div class="room-title">🚪 현재 방: {safe_text(selected_room)}</div>')
+        st.html('<div class="small-guide">메시지를 입력하고 Enter를 누르거나, 오른쪽 🚀 버튼을 누르면 바로 저장돼요.</div>')
 
         # 참여자
         participants = get_room_participants(selected_room)
@@ -720,18 +724,18 @@ with right:
                 st.caption("💡 메시지에 **이슈제목:** 과 **재현경로:** 를 포함하면 자동 등록돼요.")
             else:
                 for idx, issue in enumerate(reversed(room_issues)):
-                    num = issue_count - idx
-                    title = safe_text(issue.get("이슈제목", "(제목 없음)"))
-                    repro = safe_text(issue.get("재현경로", "(경로 없음)"))
+                    num    = issue_count - idx
+                    title  = safe_text(issue.get("이슈제목", "(제목 없음)"))
+                    repro  = safe_text(issue.get("재현경로", "(경로 없음)"))
                     writer = safe_text(issue.get("작성자", ""))
-                    dt = safe_text(issue.get("일시", ""))
-                    st.markdown(f"""
+                    dt     = safe_text(issue.get("일시", ""))
+                    st.html(f"""
                     <div class="summary-box">
                         <strong>[{num}] {title}</strong><br>
                         재현경로: {repro}<br>
                         <span style="font-size:12px;color:#888;">👤 {writer} · 🕒 {dt}</span>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """)
 
         st.divider()
 
