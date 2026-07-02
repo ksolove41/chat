@@ -19,7 +19,7 @@ if %errorlevel% neq 0 (
 echo  [1/2] server.exe 빌드 중...
 pyinstaller --onefile --noconsole ^
   --name server ^
-  --collect-all pywebview ^
+  --collect-all webview ^
   --hidden-import tkinter ^
   --hidden-import tkinter.messagebox ^
   server_launcher.py
@@ -29,7 +29,7 @@ echo.
 echo  [2/2] client.exe 빌드 중...
 pyinstaller --onefile --noconsole ^
   --name client ^
-  --collect-all pywebview ^
+  --collect-all webview ^
   --hidden-import tkinter ^
   --hidden-import tkinter.simpledialog ^
   --hidden-import tkinter.messagebox ^

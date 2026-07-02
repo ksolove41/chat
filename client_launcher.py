@@ -6,7 +6,7 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import simpledialog, messagebox
-import pywebview
+import webview
 
 PORT = 8501
 TITLE = "프로젝트 대화 로그방"
@@ -81,14 +81,14 @@ def main():
 
     save_server_ip(server_ip)
 
-    pywebview.create_window(
+    webview.create_window(
         TITLE,
         url=f"http://{server_ip}:{PORT}",
         width=1280,
         height=800,
         min_size=(800, 600),
     )
-    pywebview.start()
+    webview.start()
 
 
 if __name__ == "__main__":
